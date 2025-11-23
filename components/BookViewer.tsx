@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 import { StoryData, StoryPage } from '../types';
 
 interface BookViewerProps {
@@ -10,8 +11,10 @@ interface BookViewerProps {
 export const BookViewer: React.FC<BookViewerProps> = ({ story, onReset }) => {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const currentPage: StoryPage = story.pages[currentPageIndex];
 
@@ -86,39 +89,42 @@ export const BookViewer: React.FC<BookViewerProps> = ({ story, onReset }) => {
     playAudio(currentPage.audioBuffer);
   };
 
-  const handleExportPDF = () => {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
+  const handleExportPDF = async () => {
+    if (!exportRef.current) return;
+    setIsExporting(true);
 
-    story.pages.forEach((page, index) => {
-        if (index > 0) doc.addPage();
+    try {
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pages = exportRef.current.children;
+        const totalPages = pages.length;
 
-        // Title on first page
-        if (index === 0) {
-            doc.setFontSize(24);
-            doc.text(story.title, pageWidth / 2, 20, { align: 'center' });
+        for (let i = 0; i < totalPages; i++) {
+            const pageElement = pages[i] as HTMLElement;
+            
+            // Capture the specific export page element
+            const canvas = await html2canvas(pageElement, {
+                scale: 2, // Higher scale for better quality
+                useCORS: true, // Important for images if cross-origin
+                logging: false
+            });
+
+            const imgData = canvas.toDataURL('image/jpeg', 0.8);
+            const imgWidth = 210; // A4 width in mm
+            const pageHeight = 297; // A4 height in mm
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            if (i > 0) pdf.addPage();
+            pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
         }
 
-        // Image
-        if (page.imageData) {
-            // Keep square aspect ratio
-            const imgSize = 150;
-            const x = (pageWidth - imgSize) / 2;
-            doc.addImage(page.imageData, 'PNG', x, 40, imgSize, imgSize);
-        }
-
-        // Text
-        doc.setFontSize(14);
-        const splitText = doc.splitTextToSize(page.text, 170);
-        doc.text(splitText, pageWidth / 2, 200, { align: 'center' });
-        
-        // Footer
-        doc.setFontSize(10);
-        doc.text(`Page ${index + 1}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
-    });
-
-    doc.save(`${story.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
+        const filename = `${story.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
+        pdf.save(filename);
+    } catch (error) {
+        console.error("PDF Export failed:", error);
+        alert("Failed to export PDF. Please try again.");
+    } finally {
+        setIsExporting(false);
+    }
   };
 
   return (
@@ -141,17 +147,26 @@ export const BookViewer: React.FC<BookViewerProps> = ({ story, onReset }) => {
         
         <button 
             onClick={handleExportPDF}
-            className="text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-2 transition-colors"
+            disabled={isExporting}
+            className={`text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-2 transition-colors ${isExporting ? 'opacity-50 cursor-wait' : ''}`}
             title="Download PDF"
         >
-             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            <span className="hidden sm:inline">Export</span>
+            {isExporting ? (
+                <span className="animate-spin">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </span>
+            ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+            )}
+            <span className="hidden sm:inline">{isExporting ? 'Exporting...' : 'Export PDF'}</span>
         </button>
       </div>
 
-      {/* Book Page Container - Vertical Layout (Subtitle Style) */}
+      {/* Book Page Container - Vertical Layout */}
       <div id="book-page" className="relative w-full max-w-xl bg-white rounded-xl shadow-2xl border-4 md:border-8 border-stone-800 flex flex-col overflow-hidden mx-auto print:border-0 print:shadow-none">
         
         {/* Top: Image (Larger Area) */}
@@ -173,9 +188,8 @@ export const BookViewer: React.FC<BookViewerProps> = ({ story, onReset }) => {
             </div>
         </div>
 
-        {/* Bottom: Subtitle Text Area (Smaller Area) */}
+        {/* Bottom: Subtitle Text Area */}
         <div className="w-full p-6 bg-parchment flex flex-col justify-center items-center text-center relative min-h-[140px]">
-            
             <p className="text-lg md:text-xl font-serif leading-relaxed text-stone-800 max-w-prose">
                 {currentPage.text}
             </p>
@@ -225,6 +239,49 @@ export const BookViewer: React.FC<BookViewerProps> = ({ story, onReset }) => {
             </svg>
         </button>
       </div>
+
+        {/* Hidden Container for PDF Generation - Renders all pages in an A4-friendly format */}
+        <div 
+            ref={exportRef} 
+            className="absolute top-0 left-[-9999px] pointer-events-none"
+        >
+            {story.pages.map((page, index) => (
+                <div 
+                    key={`export-page-${index}`} 
+                    className="w-[794px] h-[1123px] bg-white flex flex-col items-center p-12 border border-gray-100"
+                >
+                    {/* Page Content */}
+                    <div className="flex-1 flex flex-col items-center justify-center w-full gap-8">
+                        {/* Title on first page */}
+                        {index === 0 && (
+                            <div className="text-center mb-8">
+                                <h1 className="text-4xl font-serif font-bold text-slate-900 mb-2">{story.title}</h1>
+                                <p className="text-slate-500 font-sans">An AI Generated Story</p>
+                            </div>
+                        )}
+
+                        {/* Image */}
+                        <div className="w-[500px] h-[500px] bg-slate-100 rounded-sm overflow-hidden border-4 border-slate-800 shadow-sm">
+                            {page.imageData && (
+                                <img src={page.imageData} alt="Story illustration" className="w-full h-full object-cover" />
+                            )}
+                        </div>
+
+                        {/* Text */}
+                        <div className="w-full max-w-[600px] text-center">
+                            <p className="text-2xl font-serif leading-relaxed text-slate-800">
+                                {page.text}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="w-full flex justify-center mt-auto pt-8 border-t border-slate-100">
+                         <span className="text-slate-400 font-serif text-sm">Page {index + 1}</span>
+                    </div>
+                </div>
+            ))}
+        </div>
 
     </div>
   );
